@@ -11,6 +11,7 @@ struct RgbValue {
 };
 
 struct Sample {
+    uint16_t width = 0, height = 0;
     // Fixed left-to-right order. All four averages come from one frame.
     RgbValue squares[SQUARE_COUNT];
 };

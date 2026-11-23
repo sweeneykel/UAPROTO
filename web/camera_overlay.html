@@ -1,0 +1,121 @@
+<!-- Four fixed sampling guides and board-side RGB sample controls. -->
+<script>
+(() => {
+  const image = document.getElementById('stream');
+  const container = document.getElementById('stream-container');
+  if (!image || !container) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const overlay = document.createElementNS(ns, 'svg');
+  overlay.id = 'sampling-overlay';
+  overlay.setAttribute('aria-label', 'Four sampling squares numbered left to right');
+  overlay.setAttribute('role', 'img');
+  Object.assign(overlay.style, {
+    position: 'absolute', pointerEvents: 'none', overflow: 'hidden', zIndex: '1'
+  });
+  container.appendChild(overlay);
+
+  function layout() {
+    // Use rendered image dimensions, excluding the image's top margin.
+    const width = image.clientWidth, height = image.clientHeight;
+    if (!width || !height || !image.naturalWidth) {
+      overlay.style.display = 'none';
+      return;
+    }
+    overlay.style.display = 'block';
+    overlay.style.left = image.offsetLeft + 'px';
+    overlay.style.top = image.offsetTop + 'px';
+    overlay.style.width = width + 'px';
+    overlay.style.height = height + 'px';
+    const frameWidth = image.naturalWidth, frameHeight = image.naturalHeight;
+    overlay.setAttribute('viewBox', '0 0 ' + frameWidth + ' ' + frameHeight);
+    overlay.replaceChildren();
+    // QVGA: 64px squares and 8px gaps. Scale with the displayed image.
+    const side = Math.min(Math.floor(frameWidth / 5), Math.floor(frameHeight * 4 / 5));
+    const gap = Math.floor(frameWidth / 40);
+    const left = Math.floor((frameWidth - (4 * side + 3 * gap)) / 2);
+    const top = Math.floor((frameHeight - side) / 2);
+    for (let i = 0; i < 4; i++) {
+      const square = document.createElementNS(ns, 'rect');
+      square.setAttribute('x', left + i * (side + gap));
+      square.setAttribute('y', top);
+      square.setAttribute('width', side);
+      square.setAttribute('height', side);
+      square.setAttribute('fill', 'none');
+      square.setAttribute('stroke', 'white');
+      square.setAttribute('stroke-width', '1');
+      square.setAttribute('vector-effect', 'non-scaling-stroke');
+      square.style.filter = 'drop-shadow(0 0 1px black)';
+      overlay.appendChild(square);
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', left + i * (side + gap) + 3);
+      label.setAttribute('y', Math.max(12, top - 5));
+      label.setAttribute('fill', 'white');
+      label.setAttribute('stroke', 'black');
+      label.setAttribute('stroke-width', '2');
+      label.setAttribute('vector-effect', 'non-scaling-stroke');
+      label.setAttribute('paint-order', 'stroke');
+      label.setAttribute('font-size', String(12 * frameWidth / width));
+      label.setAttribute('font-family', 'sans-serif');
+      label.textContent = i + 1;
+      overlay.appendChild(label);
+    }
+  }
+  image.addEventListener('load', layout);
+  new ResizeObserver(layout).observe(image);
+  window.addEventListener('resize', layout);
+  layout();
+})();
+</script>
+<!-- Samples are held on the ESP32; browser overlay pixels are never measured. -->
+<script>
+(() => {
+  const image = document.getElementById('stream');
+  if (!image) return;
+  const panel = document.createElement('section');
+  panel.id = 'rgb-sampling';
+  panel.style.cssText = 'display:block;padding:12px 0;max-width:480px';
+  panel.innerHTML = '<h3>RGB sample</h3><button type="button" id="take-rgb-sample">Take RGB sample</button>' +
+    '<p id="rgb-sample-status" role="status">No sample taken.</p>' +
+    '<table style="width:100%;text-align:left"><thead><tr><th>Square</th><th>R</th><th>G</th><th>B</th><th>Result</th></tr></thead>' +
+    '<tbody id="rgb-sample-values"></tbody></table>' +
+    '<p>Readings stay fixed until the next sample. Live video continues. Values are not calibrated.</p>';
+  image.closest('figure').appendChild(panel);
+  const button = panel.querySelector('#take-rgb-sample');
+  const status = panel.querySelector('#rgb-sample-status');
+  const rows = panel.querySelector('#rgb-sample-values');
+  for (let i = 1; i <= 4; i++) {
+    const row = rows.insertRow();
+    [i, '-', '-', '-', 'Not sampled'].forEach(value => { row.insertCell().textContent = value; });
+  }
+  function show(data) {
+    data.rgb.forEach((rgb, i) => {
+      [i + 1, rgb.r, rgb.g, rgb.b, data.results[i].text].forEach((value, column) => {
+        rows.rows[i].cells[column].textContent = value;
+      });
+    });
+    data.results.forEach((result, i) => {
+      rows.rows[i].cells[4].style.color = result.status === 'no_match' ? '#ff9d9d' : '#9de39d';
+    });
+    status.textContent = 'Sample ' + data.sequence + ' held (' + data.width + ' x ' + data.height + '). ' + (data.mismatch ? 'One or more squares have no lookup match.' : 'All squares matched.');
+  }
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    status.textContent = 'Taking sample...';
+    try {
+      const response = await fetch('/rgb-sample', { method: 'POST', cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Sampling failed; previous readings retained.');
+      show(data);
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  // Restore the last board-held reading after refreshing the browser page.
+  fetch('/rgb-sample', { cache: 'no-store' }).then(async response => {
+    if (response.ok) show(await response.json());
+    else if (response.status !== 404) status.textContent = 'Could not load previous sample.';
+  }).catch(() => { status.textContent = 'Could not load previous sample.'; });
+})();
+</script>
